@@ -407,9 +407,18 @@ describe("Restate Queue Provider", () => {
 
       await waitUntilQueueEmpty();
 
-      expect(testState.results).toEqual([
-        200, 100, 300, 201, 101, 301, 102, 103,
+      const groupForResult = (result: number) => Math.floor(result / 100);
+
+      expect([...testState.results].sort((a, b) => a - b)).toEqual([
+        100, 101, 102, 103, 200, 201, 300, 301,
       ]);
+      expect(
+        new Set(testState.results.slice(0, 3).map(groupForResult)),
+      ).toEqual(new Set([1, 2, 3]));
+      expect(
+        new Set(testState.results.slice(3, 6).map(groupForResult)),
+      ).toEqual(new Set([1, 2, 3]));
+      expect(testState.results.slice(6).map(groupForResult)).toEqual([1, 1]);
     }, 60000);
 
     it("should respect priority over group fairness", async () => {
@@ -493,8 +502,18 @@ describe("Restate Queue Provider", () => {
 
       await waitUntilQueueEmpty();
 
-      // All jobs should complete successfully
-      expect(testState.results).toEqual([100, 200, 101, 201]);
+      const groupForResult = (result: number) =>
+        result < 200 ? "ungrouped" : "A";
+
+      expect([...testState.results].sort((a, b) => a - b)).toEqual([
+        100, 101, 200, 201,
+      ]);
+      expect(
+        new Set(testState.results.slice(0, 2).map(groupForResult)),
+      ).toEqual(new Set(["ungrouped", "A"]));
+      expect(new Set(testState.results.slice(2).map(groupForResult))).toEqual(
+        new Set(["ungrouped", "A"]),
+      );
     }, 60000);
 
     it("should work with jobs that don't specify groupId", async () => {

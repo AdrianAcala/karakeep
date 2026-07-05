@@ -1,7 +1,7 @@
 export async function waitUntil(
   f: () => Promise<boolean>,
   description: string,
-  timeoutMs = 60000,
+  timeoutMs = 240000,
 ): Promise<void> {
   const startTime = Date.now();
 

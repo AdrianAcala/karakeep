@@ -9,6 +9,22 @@ const stringBool = (defaultValue: string) =>
     .refine((s) => s === "true" || s === "false")
     .transform((s) => s === "true");
 
+const noColorBool = () =>
+  z
+    .string()
+    .prefault("false")
+    .transform((s) => {
+      if (s === "" || s === "1") {
+        return "true";
+      }
+      if (s === "0") {
+        return "false";
+      }
+      return s;
+    })
+    .refine((s) => s === "true" || s === "false")
+    .transform((s) => s === "true");
+
 const optionalStringBool = () =>
   z
     .string()
@@ -133,7 +149,7 @@ const allEnv = z.object({
   CRAWLER_DOMAIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().min(1).optional(),
   CRAWLER_DOMAIN_RATE_LIMIT_MAX_REQUESTS: z.coerce.number().min(1).optional(),
   LOG_LEVEL: z.string().default("debug"),
-  NO_COLOR: stringBool("false"),
+  NO_COLOR: noColorBool(),
   DEMO_MODE: stringBool("false"),
   DEMO_MODE_EMAIL: z.string().optional(),
   DEMO_MODE_PASSWORD: z.string().optional(),

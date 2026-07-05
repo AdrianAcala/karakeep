@@ -10,7 +10,7 @@ describe("normalizeI18nLanguage", () => {
 });
 
 describe("formatLocalDate", () => {
-  const date = new Date("2025-01-05T15:42:00Z");
+  const date = new Date(2025, 0, 5, 15, 42);
 
   it("formats supported locales with localized date and time", () => {
     expect(formatLocalDate(date, "PP, p", "en")).toBe("Jan 5, 2025, 3:42 PM");

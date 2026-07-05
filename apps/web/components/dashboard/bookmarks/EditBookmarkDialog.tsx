@@ -37,7 +37,10 @@ import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import { useForm } from "react-hook-form";
 
-import { useUpdateBookmark } from "@karakeep/shared-react/hooks/bookmarks";
+import {
+  useUpdateBookmark,
+  useUpdateBookmarkTags,
+} from "@karakeep/shared-react/hooks/bookmarks";
 import { useTRPC } from "@karakeep/shared-react/trpc";
 import {
   BookmarkTypes,
@@ -46,7 +49,7 @@ import {
 } from "@karakeep/shared/types/bookmarks";
 import { getBookmarkTitle } from "@karakeep/shared/utils/bookmarkUtils";
 
-import { BookmarkTagsEditor } from "./BookmarkTagsEditor";
+import { TagsEditor } from "./TagsEditor";
 
 const formSchema = zUpdateBookmarksRequestSchema.extend({
   createdAt: z.date().optional(),
@@ -54,6 +57,14 @@ const formSchema = zUpdateBookmarksRequestSchema.extend({
   dateModified: z.date().nullish(),
 });
 type BookmarkFormValues = z.infer<typeof formSchema>;
+interface PendingTagAttach {
+  tagName: string;
+  tagId?: string;
+}
+interface PendingTagDetach {
+  tagName: string;
+  tagId: string;
+}
 
 export function EditBookmarkDialog({
   open,
@@ -118,33 +129,109 @@ export function EditBookmarkDialog({
     resolver: zodResolver(formSchema),
     defaultValues: bookmarkToDefault(bookmark),
   });
+  const [pendingTagAttaches, setPendingTagAttaches] = React.useState<
+    PendingTagAttach[]
+  >([]);
+  const [pendingTagDetaches, setPendingTagDetaches] = React.useState<
+    PendingTagDetach[]
+  >([]);
 
-  const { mutate: updateBookmarkMutate, isPending: isUpdatingBookmark } =
-    useUpdateBookmark({
-      onSuccess: (updatedBookmark) => {
-        toast({ description: "Bookmark details updated successfully!" });
-        // Close the dialog after successful detail update
-        setOpen(false);
-        // Reset form with potentially updated data
-        form.reset(bookmarkToDefault(updatedBookmark));
-      },
-      onError: (error) => {
-        toast({
-          variant: "destructive",
-          title: "Failed to update bookmark",
-          description: error.message,
-        });
-      },
-    });
+  React.useEffect(() => {
+    if (open) {
+      setPendingTagAttaches([]);
+      setPendingTagDetaches([]);
+    }
+  }, [bookmark.id, open]);
 
-  function onSubmit(values: BookmarkFormValues) {
+  const {
+    mutateAsync: updateBookmarkMutateAsync,
+    isPending: isUpdatingBookmark,
+  } = useUpdateBookmark();
+  const {
+    mutateAsync: updateBookmarkTagsMutateAsync,
+    isPending: isUpdatingTags,
+  } = useUpdateBookmarkTags();
+
+  async function onSubmit(values: BookmarkFormValues) {
     // Ensure optional fields that are empty strings are sent as null/undefined if appropriate
     const payload = {
       ...values,
       title: values.title ?? null,
     };
-    updateBookmarkMutate(payload);
+    try {
+      const updatedBookmark = await updateBookmarkMutateAsync(payload);
+      if (pendingTagAttaches.length > 0 || pendingTagDetaches.length > 0) {
+        await updateBookmarkTagsMutateAsync({
+          bookmarkId: bookmark.id,
+          attach: pendingTagAttaches,
+          detach: pendingTagDetaches.map(({ tagId }) => ({ tagId })),
+        });
+      }
+
+      toast({ description: "Bookmark details updated successfully!" });
+      setOpen(false);
+      setPendingTagAttaches([]);
+      setPendingTagDetaches([]);
+      // Reset form with potentially updated data
+      form.reset(bookmarkToDefault(updatedBookmark));
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Failed to update bookmark",
+        description:
+          error instanceof Error
+            ? error.message
+            : "There was a problem with your request.",
+      });
+    }
   }
+
+  const onAttachTag = React.useCallback(
+    ({ tagName, tagId }: PendingTagAttach) => {
+      setPendingTagDetaches((prev) =>
+        tagId ? prev.filter((tag) => tag.tagId !== tagId) : prev,
+      );
+
+      const isInitialTag = bookmark.tags.some((tag) =>
+        tagId ? tag.id === tagId : tag.name === tagName,
+      );
+      if (isInitialTag) {
+        return;
+      }
+
+      setPendingTagAttaches((prev) => {
+        const alreadyPending = prev.some((tag) =>
+          tagId && tag.tagId ? tag.tagId === tagId : tag.tagName === tagName,
+        );
+        return alreadyPending ? prev : [...prev, { tagName, tagId }];
+      });
+    },
+    [bookmark.tags],
+  );
+
+  const onDetachTag = React.useCallback(
+    ({ tagName, tagId }: PendingTagDetach) => {
+      setPendingTagAttaches((prev) =>
+        prev.filter((tag) =>
+          tag.tagId && !tag.tagId.startsWith("temp-")
+            ? tag.tagId !== tagId
+            : tag.tagName !== tagName,
+        ),
+      );
+
+      const isInitialTag = bookmark.tags.some((tag) => tag.id === tagId);
+      if (!isInitialTag) {
+        return;
+      }
+
+      setPendingTagDetaches((prev) =>
+        prev.some((tag) => tag.tagId === tagId)
+          ? prev
+          : [...prev, { tagName, tagId }],
+      );
+    },
+    [bookmark.tags],
+  );
 
   // Reset form only when dialog is initially opened to preserve unsaved changes
   // This prevents losing unsaved title edits when tags are updated, which would
@@ -160,6 +247,7 @@ export function EditBookmarkDialog({
 
   const isLink = bookmark.content.type === BookmarkTypes.LINK;
   const isAsset = bookmark.content.type === BookmarkTypes.ASSET;
+  const isSaving = isUpdatingBookmark || isUpdatingTags;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -418,7 +506,11 @@ export function EditBookmarkDialog({
             <FormItem>
               <FormLabel>{t("common.tags")}</FormLabel>
               <FormControl>
-                <BookmarkTagsEditor bookmark={bookmark} />
+                <TagsEditor
+                  tags={bookmark.tags}
+                  onAttach={onAttachTag}
+                  onDetach={onDetachTag}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -428,11 +520,11 @@ export function EditBookmarkDialog({
                 type="button"
                 variant="outline"
                 onClick={() => setOpen(false)}
-                disabled={isUpdatingBookmark}
+                disabled={isSaving}
               >
                 {t("actions.cancel")}
               </Button>
-              <ActionButton type="submit" loading={isUpdatingBookmark}>
+              <ActionButton type="submit" loading={isSaving}>
                 {t("bookmark_editor.save_changes")}
               </ActionButton>
             </DialogFooter>

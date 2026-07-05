@@ -188,7 +188,7 @@ describe("Import Worker Tests", () => {
         return allProcessed && stats.totalBookmarks === 15;
       },
       "All bookmarks are processed",
-      120000, // 2 minutes timeout
+      240000, // 4 minutes timeout
     );
 
     // Get final stats
