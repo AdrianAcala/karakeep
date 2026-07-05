@@ -457,6 +457,7 @@ export class CrawlerWorker {
                 .where(
                   and(
                     eq(bookmarks.id, bookmarkId),
+                    isNull(bookmarks.deletedAt),
                     eq(bookmarks.taggingStatus, "pending"),
                   ),
                 );
@@ -468,6 +469,7 @@ export class CrawlerWorker {
                 .where(
                   and(
                     eq(bookmarks.id, bookmarkId),
+                    isNull(bookmarks.deletedAt),
                     eq(bookmarks.summarizationStatus, "pending"),
                   ),
                 );
@@ -479,6 +481,7 @@ export class CrawlerWorker {
                 .where(
                   and(
                     eq(bookmarks.id, bookmarkId),
+                    isNull(bookmarks.deletedAt),
                     eq(bookmarks.embeddingStatus, "pending"),
                   ),
                 );
@@ -1832,7 +1835,20 @@ async function handleAsAssetBookmark(
         return;
       }
       const fileName = path.basename(new URL(url).pathname);
+      let attachedAsset = false;
       await db.transaction(async (trx) => {
+        // Switch the type of the bookmark from LINK to ASSET. If it was
+        // deleted while the download was running, leave the row untouched.
+        const updatedBookmark = await trx
+          .update(bookmarks)
+          .set({ type: BookmarkTypes.ASSET })
+          .where(
+            and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
+          );
+        if (updatedBookmark.changes === 0) {
+          return;
+        }
+
         await updateAsset(
           undefined,
           {
@@ -1854,13 +1870,13 @@ async function handleAsAssetBookmark(
           fileName,
           sourceUrl: url,
         });
-        // Switch the type of the bookmark from LINK to ASSET
-        await trx
-          .update(bookmarks)
-          .set({ type: BookmarkTypes.ASSET })
-          .where(eq(bookmarks.id, bookmarkId));
         await trx.delete(bookmarkLinks).where(eq(bookmarkLinks.id, bookmarkId));
+        attachedAsset = true;
       });
+      if (!attachedAsset) {
+        await silentDeleteAsset(userId, downloaded.assetId);
+        return;
+      }
       await AssetPreprocessingQueue.enqueue(
         {
           bookmarkId,

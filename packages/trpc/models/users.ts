@@ -416,7 +416,7 @@ export class User {
     await User.assertNoActiveStripeSubscriptionForUser(db, userId);
 
     const deletedAt = new Date();
-    const deletedEmail = `deleted:${userId}:${deletedAt.getTime()}@deleted.local`;
+    const deletedEmail = `deleted+${userId}.${deletedAt.getTime()}@deleted.local`;
 
     await db.transaction(async (tx) => {
       const res = await tx

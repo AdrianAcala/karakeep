@@ -129,11 +129,18 @@ export abstract class List {
             columns: {
               rssToken: false,
             },
+            with: {
+              user: {
+                columns: {
+                  deletedAt: true,
+                },
+              },
+            },
           },
         },
       });
 
-      if (collaborator) {
+      if (collaborator?.list.user && !collaborator.list.user.deletedAt) {
         list = {
           ...collaborator.list,
           userRole: collaborator.role,
@@ -175,11 +182,12 @@ export abstract class List {
         user: {
           columns: {
             name: true,
+            deletedAt: true,
           },
         },
       },
     });
-    if (!listdb) {
+    if (!listdb || !listdb.user || listdb.user.deletedAt) {
       throw new TRPCError({
         code: "NOT_FOUND",
         message: "List not found",
@@ -326,6 +334,11 @@ export abstract class List {
             rssToken: false,
           },
           with: {
+            user: {
+              columns: {
+                deletedAt: true,
+              },
+            },
             collaborators: {
               where: eq(listCollaborators.userId, ctx.user.id),
               columns: {
@@ -359,6 +372,10 @@ export abstract class List {
     }
 
     return lists.flatMap((l) => {
+      if (!l.list.user || l.list.user.deletedAt) {
+        return [];
+      }
+
       let userRole: "owner" | "editor" | "viewer" | null;
       let collaboratorEntry: ListCollaboratorEntry | null = null;
       if (l.list.collaborators.length > 0) {
@@ -806,6 +823,7 @@ export abstract class List {
               name: true,
               email: true,
               image: true,
+              deletedAt: true,
             },
           },
         },
@@ -829,23 +847,25 @@ export abstract class List {
       },
     });
 
-    const collaboratorEntries = collaborators.map((c) => {
-      return {
-        id: c.id,
-        userId: c.userId,
-        role: c.role,
-        status: "accepted" as const,
-        addedAt: c.addedAt,
-        invitedAt: c.addedAt,
-        user: {
-          id: c.user.id,
-          name: c.user.name,
-          // Only show email to the owner for privacy
-          email: isOwner ? c.user.email : null,
-          image: c.user.image,
-        },
-      };
-    });
+    const collaboratorEntries = collaborators
+      .filter((c) => !c.user.deletedAt)
+      .map((c) => {
+        return {
+          id: c.id,
+          userId: c.userId,
+          role: c.role,
+          status: "accepted" as const,
+          addedAt: c.addedAt,
+          invitedAt: c.addedAt,
+          user: {
+            id: c.user.id,
+            name: c.user.name,
+            // Only show email to the owner for privacy
+            email: isOwner ? c.user.email : null,
+            image: c.user.image,
+          },
+        };
+      });
 
     return {
       collaborators: [...collaboratorEntries, ...invitations],
@@ -875,23 +895,32 @@ export abstract class List {
           columns: {
             rssToken: false,
           },
+          with: {
+            user: {
+              columns: {
+                deletedAt: true,
+              },
+            },
+          },
         },
       },
     });
 
-    return collaborations.map((c) =>
-      this.fromData(
-        ctx,
-        {
-          ...c.list,
-          userRole: c.role,
-          hasCollaborators: true, // If you're a collaborator, the list has collaborators
-        },
-        {
-          membershipId: c.id,
-        },
-      ),
-    );
+    return collaborations
+      .filter((c) => c.list.user && !c.list.user.deletedAt)
+      .map((c) =>
+        this.fromData(
+          ctx,
+          {
+            ...c.list,
+            userRole: c.role,
+            hasCollaborators: true, // If you're a collaborator, the list has collaborators
+          },
+          {
+            membershipId: c.id,
+          },
+        ),
+      );
   }
 
   abstract get type(): "manual" | "smart";

@@ -1,6 +1,8 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 
+import { users } from "@karakeep/db/schema";
 import {
   BookmarkTypes,
   zNewBookmarkRequestSchema,
@@ -160,6 +162,78 @@ describe("Lists Routes", () => {
     await expect(() =>
       api.delete({ listId: "non-existent-id" }),
     ).rejects.toThrow(/List not found/);
+  });
+
+  test<CustomTestContext>("hides shared list when owner is deleted", async ({
+    apiCallers,
+    db,
+  }) => {
+    const ownerApi = apiCallers[0];
+    const collaboratorApi = apiCallers[1];
+    const owner = await ownerApi.users.whoami();
+    const collaborator = await collaboratorApi.users.whoami();
+
+    const list = await ownerApi.lists.create({
+      name: "Shared List",
+      type: "manual",
+      icon: "📚",
+    });
+    const { invitationId } = await ownerApi.lists.addCollaborator({
+      listId: list.id,
+      email: collaborator.email!,
+      role: "viewer",
+    });
+    await collaboratorApi.lists.acceptInvitation({ invitationId });
+
+    await expect(
+      collaboratorApi.lists.get({ listId: list.id }),
+    ).resolves.toMatchObject({ id: list.id });
+
+    await db
+      .update(users)
+      .set({ deletedAt: new Date() })
+      .where(eq(users.id, owner.id));
+
+    await expect(() =>
+      collaboratorApi.lists.get({ listId: list.id }),
+    ).rejects.toThrow(/List not found/);
+    const lists = await collaboratorApi.lists.list();
+    expect(lists.lists.find((l) => l.id === list.id)).toBeUndefined();
+  });
+
+  test<CustomTestContext>("hides pending list invitation when owner is deleted", async ({
+    apiCallers,
+    db,
+  }) => {
+    const ownerApi = apiCallers[0];
+    const invitedApi = apiCallers[1];
+    const owner = await ownerApi.users.whoami();
+    const invited = await invitedApi.users.whoami();
+
+    const list = await ownerApi.lists.create({
+      name: "Pending Shared List",
+      type: "manual",
+      icon: "📚",
+    });
+    const { invitationId } = await ownerApi.lists.addCollaborator({
+      listId: list.id,
+      email: invited.email!,
+      role: "viewer",
+    });
+
+    await expect(invitedApi.lists.getPendingInvitations()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: invitationId })]),
+    );
+
+    await db
+      .update(users)
+      .set({ deletedAt: new Date() })
+      .where(eq(users.id, owner.id));
+
+    await expect(invitedApi.lists.getPendingInvitations()).resolves.toEqual([]);
+    await expect(() =>
+      invitedApi.lists.acceptInvitation({ invitationId }),
+    ).rejects.toThrow(/Invitation not found/);
   });
 
   describe("rule cleanup after list deletion", () => {

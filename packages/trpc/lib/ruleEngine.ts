@@ -320,7 +320,12 @@ export class RuleEngine {
           .set({
             favourited: true,
           })
-          .where(eq(bookmarks.id, this.bookmark.id));
+          .where(
+            and(
+              eq(bookmarks.id, this.bookmark.id),
+              isNull(bookmarks.deletedAt),
+            ),
+          );
         return `Marked as favourited`;
       }
       case "archiveBookmark": {
@@ -329,7 +334,12 @@ export class RuleEngine {
           .set({
             archived: true,
           })
-          .where(eq(bookmarks.id, this.bookmark.id));
+          .where(
+            and(
+              eq(bookmarks.id, this.bookmark.id),
+              isNull(bookmarks.deletedAt),
+            ),
+          );
         return `Marked as archived`;
       }
       default: {

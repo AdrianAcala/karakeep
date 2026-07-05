@@ -189,7 +189,7 @@ URL: ${link.url ?? ""}
       summary: summaryResult.response,
       modifiedAt: new Date(),
     })
-    .where(eq(bookmarks.id, bookmarkId));
+    .where(and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)));
 
   await triggerSearchReindex(bookmarkId, {
     priority: job.priority,

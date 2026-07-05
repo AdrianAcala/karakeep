@@ -47,11 +47,22 @@ export class ListInvitation {
           columns: {
             userId: true,
           },
+          with: {
+            user: {
+              columns: {
+                deletedAt: true,
+              },
+            },
+          },
         },
       },
     });
 
-    if (!invitation) {
+    if (
+      !invitation ||
+      !invitation.list.user ||
+      invitation.list.user.deletedAt
+    ) {
       throw new TRPCError({
         code: "NOT_FOUND",
         message: "Invitation not found",
@@ -313,6 +324,7 @@ export class ListInvitation {
                 id: true,
                 name: true,
                 email: true,
+                deletedAt: true,
               },
             },
           },
@@ -320,25 +332,27 @@ export class ListInvitation {
       },
     });
 
-    return invitations.map((inv) => ({
-      id: inv.id,
-      listId: inv.listId,
-      role: inv.role,
-      invitedAt: inv.invitedAt,
-      list: {
-        id: inv.list.id,
-        name: inv.list.name,
-        icon: inv.list.icon,
-        description: inv.list.description,
-        owner: inv.list.user
-          ? {
-              id: inv.list.user.id,
-              name: inv.list.user.name,
-              email: inv.list.user.email,
-            }
-          : null,
-      },
-    }));
+    return invitations
+      .filter((inv) => inv.list.user && !inv.list.user.deletedAt)
+      .map((inv) => ({
+        id: inv.id,
+        listId: inv.listId,
+        role: inv.role,
+        invitedAt: inv.invitedAt,
+        list: {
+          id: inv.list.id,
+          name: inv.list.name,
+          icon: inv.list.icon,
+          description: inv.list.description,
+          owner: inv.list.user
+            ? {
+                id: inv.list.user.id,
+                name: inv.list.user.name,
+                email: inv.list.user.email,
+              }
+            : null,
+        },
+      }));
   }
 
   static async invitationsForList(
@@ -353,28 +367,31 @@ export class ListInvitation {
             id: true,
             name: true,
             email: true,
+            deletedAt: true,
           },
         },
       },
     });
 
-    return invitations.map((invitation) => ({
-      id: invitation.id,
-      listId: invitation.listId,
-      userId: invitation.userId,
-      role: invitation.role,
-      status: invitation.status,
-      invitedAt: invitation.invitedAt,
-      addedAt: invitation.invitedAt,
-      user: {
-        id: invitation.user.id,
-        // Don't show the actual user's name for any invitation (pending or declined)
-        // This protects user privacy until they accept
-        name: "Pending User",
-        email: invitation.user.email || "",
-        image: null,
-      },
-    }));
+    return invitations
+      .filter((invitation) => !invitation.user.deletedAt)
+      .map((invitation) => ({
+        id: invitation.id,
+        listId: invitation.listId,
+        userId: invitation.userId,
+        role: invitation.role,
+        status: invitation.status,
+        invitedAt: invitation.invitedAt,
+        addedAt: invitation.invitedAt,
+        user: {
+          id: invitation.user.id,
+          // Don't show the actual user's name for any invitation (pending or declined)
+          // This protects user privacy until they accept
+          name: "Pending User",
+          email: invitation.user.email || "",
+          image: null,
+        },
+      }));
   }
 
   static async sendInvitationEmail(params: {

@@ -1,9 +1,10 @@
-import { and, asc, count, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, notExists } from "drizzle-orm";
 
 import type { DB } from "@karakeep/db";
 import { db as defaultDb } from "@karakeep/db";
 import { bookmarks, users } from "@karakeep/db/schema";
 import type { ZAdminMaintenanceReapDeletedDataTask } from "@karakeep/shared-server";
+import { EmbeddingsQueue, SearchIndexingQueue } from "@karakeep/shared-server";
 import {
   deleteAsset as defaultDeleteAsset,
   deleteUserAssets as defaultDeleteUserAssets,
@@ -16,17 +17,47 @@ const USER_BATCH_SIZE = 5;
 
 type DeleteAssetFn = typeof defaultDeleteAsset;
 type DeleteUserAssetsFn = typeof defaultDeleteUserAssets;
+type EnqueueBookmarkDeleteCleanupFn = typeof enqueueBookmarkDeleteCleanup;
 
 interface ReapDeletedDataDeps {
   database?: DB;
   deleteAssetFn?: DeleteAssetFn;
   deleteUserAssetsFn?: DeleteUserAssetsFn;
+  enqueueBookmarkDeleteCleanupFn?: EnqueueBookmarkDeleteCleanupFn;
+}
+
+async function enqueueBookmarkDeleteCleanup({
+  bookmarkId,
+  userId,
+}: {
+  bookmarkId: string;
+  userId: string;
+}) {
+  await SearchIndexingQueue.enqueue(
+    {
+      bookmarkId,
+      type: "delete",
+    },
+    {
+      groupId: userId,
+    },
+  );
+  await EmbeddingsQueue.enqueue(
+    {
+      bookmarkId,
+      type: "delete",
+    },
+    {
+      groupId: userId,
+    },
+  );
 }
 
 async function reapDeletedBookmark(
   database: DB,
   bookmark: Awaited<ReturnType<typeof getDeletedBookmarkBatch>>[number],
   deleteAssetFn: DeleteAssetFn,
+  enqueueBookmarkDeleteCleanupFn: EnqueueBookmarkDeleteCleanupFn,
 ) {
   const assetIds = new Set(bookmark.assets.map((asset) => asset.id));
   if (bookmark.asset?.assetId) {
@@ -36,6 +67,11 @@ async function reapDeletedBookmark(
   for (const assetId of assetIds) {
     await deleteAssetFn({ userId: bookmark.userId, assetId });
   }
+
+  await enqueueBookmarkDeleteCleanupFn({
+    bookmarkId: bookmark.id,
+    userId: bookmark.userId,
+  });
 
   await database
     .delete(bookmarks)
@@ -60,6 +96,7 @@ export async function reapDeletedBookmarks(
   {
     database = defaultDb,
     deleteAssetFn = defaultDeleteAsset,
+    enqueueBookmarkDeleteCleanupFn = enqueueBookmarkDeleteCleanup,
   }: ReapDeletedDataDeps = {},
 ) {
   let reaped = 0;
@@ -77,7 +114,12 @@ export async function reapDeletedBookmarks(
       }
 
       try {
-        await reapDeletedBookmark(database, bookmark, deleteAssetFn);
+        await reapDeletedBookmark(
+          database,
+          bookmark,
+          deleteAssetFn,
+          enqueueBookmarkDeleteCleanupFn,
+        );
         reaped += 1;
         reapedInBatch += 1;
       } catch (error) {
@@ -100,20 +142,10 @@ async function reapDeletedUser(
   user: Pick<typeof users.$inferSelect, "id">,
   deleteUserAssetsFn: DeleteUserAssetsFn,
 ) {
-  const [{ remainingBookmarks }] = await database
-    .select({ remainingBookmarks: count() })
-    .from(bookmarks)
-    .where(eq(bookmarks.userId, user.id));
-
-  if (remainingBookmarks > 0) {
-    return false;
-  }
-
   await deleteUserAssetsFn({ userId: user.id });
   await database
     .delete(users)
     .where(and(eq(users.id, user.id), isNotNull(users.deletedAt)));
-  return true;
 }
 
 export async function reapDeletedUsers(
@@ -127,14 +159,22 @@ export async function reapDeletedUsers(
   let reaped = 0;
 
   while (!abortSignal.aborted) {
-    const deletedUsers = await database.query.users.findMany({
-      where: isNotNull(users.deletedAt),
-      columns: {
-        id: true,
-      },
-      orderBy: [asc(users.deletedAt), asc(users.id)],
-      limit: USER_BATCH_SIZE,
-    });
+    const deletedUsers = await database
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          isNotNull(users.deletedAt),
+          notExists(
+            database
+              .select({ id: bookmarks.id })
+              .from(bookmarks)
+              .where(eq(bookmarks.userId, users.id)),
+          ),
+        ),
+      )
+      .orderBy(asc(users.deletedAt), asc(users.id))
+      .limit(USER_BATCH_SIZE);
 
     if (deletedUsers.length === 0) {
       break;
@@ -147,10 +187,9 @@ export async function reapDeletedUsers(
       }
 
       try {
-        if (await reapDeletedUser(database, user, deleteUserAssetsFn)) {
-          reaped += 1;
-          reapedInBatch += 1;
-        }
+        await reapDeletedUser(database, user, deleteUserAssetsFn);
+        reaped += 1;
+        reapedInBatch += 1;
       } catch (error) {
         logger.error(
           `[adminMaintenance:reap_deleted_data][${jobId}] Failed to reap user ${user.id}: ${error}`,

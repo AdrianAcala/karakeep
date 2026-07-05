@@ -76,6 +76,7 @@ export class AssetPreprocessingWorker {
                   .where(
                     and(
                       eq(bookmarks.id, bookmarkId),
+                      isNull(bookmarks.deletedAt),
                       eq(bookmarks.taggingStatus, "pending"),
                     ),
                   );
@@ -87,6 +88,7 @@ export class AssetPreprocessingWorker {
                   .where(
                     and(
                       eq(bookmarks.id, bookmarkId),
+                      isNull(bookmarks.deletedAt),
                       eq(bookmarks.summarizationStatus, "pending"),
                     ),
                   );
@@ -98,6 +100,7 @@ export class AssetPreprocessingWorker {
                   .where(
                     and(
                       eq(bookmarks.id, bookmarkId),
+                      isNull(bookmarks.deletedAt),
                       eq(bookmarks.embeddingStatus, "pending"),
                     ),
                   );

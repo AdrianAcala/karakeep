@@ -64,9 +64,14 @@ describe("reapDeletedData", () => {
     ]);
 
     const deleteAssetFn = vi.fn().mockResolvedValue(undefined);
+    const enqueueBookmarkDeleteCleanupFn = vi.fn().mockResolvedValue(undefined);
 
     await expect(
-      reapDeletedBookmarks("job", abortSignal(), { database, deleteAssetFn }),
+      reapDeletedBookmarks("job", abortSignal(), {
+        database,
+        deleteAssetFn,
+        enqueueBookmarkDeleteCleanupFn,
+      }),
     ).resolves.toBe(1);
 
     expect(deleteAssetFn).toHaveBeenCalledWith({
@@ -76,6 +81,10 @@ describe("reapDeletedData", () => {
     expect(deleteAssetFn).toHaveBeenCalledWith({
       userId: user.id,
       assetId: "asset-extra",
+    });
+    expect(enqueueBookmarkDeleteCleanupFn).toHaveBeenCalledWith({
+      userId: user.id,
+      bookmarkId: bookmark.id,
     });
     await expect(
       database.query.bookmarks.findFirst({
@@ -103,11 +112,17 @@ describe("reapDeletedData", () => {
     });
 
     const deleteAssetFn = vi.fn().mockRejectedValue(new Error("s3 failed"));
+    const enqueueBookmarkDeleteCleanupFn = vi.fn().mockResolvedValue(undefined);
 
     await expect(
-      reapDeletedBookmarks("job", abortSignal(), { database, deleteAssetFn }),
+      reapDeletedBookmarks("job", abortSignal(), {
+        database,
+        deleteAssetFn,
+        enqueueBookmarkDeleteCleanupFn,
+      }),
     ).resolves.toBe(0);
 
+    expect(enqueueBookmarkDeleteCleanupFn).not.toHaveBeenCalled();
     await expect(
       database.query.bookmarks.findFirst({
         where: eq(bookmarks.id, bookmark.id),
@@ -147,5 +162,38 @@ describe("reapDeletedData", () => {
         where: eq(users.id, userWithBookmark.id),
       }),
     ).resolves.toMatchObject({ id: userWithBookmark.id });
+  });
+
+  test("does not let deleted users with bookmarks block eligible users", async () => {
+    const database = getInMemoryDB(true);
+    const blockedUsers = await Promise.all(
+      Array.from({ length: 6 }, () => createDeletedUser(database)),
+    );
+    const eligibleUser = await createDeletedUser(database);
+    await database.insert(bookmarks).values(
+      blockedUsers.map((user) => ({
+        userId: user.id,
+        type: BookmarkTypes.TEXT as BookmarkTypes.TEXT,
+        deletedAt: new Date(),
+      })),
+    );
+
+    const deleteUserAssetsFn = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      reapDeletedUsers("job", abortSignal(), {
+        database,
+        deleteUserAssetsFn,
+      }),
+    ).resolves.toBe(1);
+
+    expect(deleteUserAssetsFn).toHaveBeenCalledWith({
+      userId: eligibleUser.id,
+    });
+    await expect(
+      database.query.users.findFirst({
+        where: eq(users.id, eligibleUser.id),
+      }),
+    ).resolves.toBeUndefined();
   });
 });
