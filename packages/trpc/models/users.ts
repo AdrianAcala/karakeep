@@ -1,11 +1,13 @@
 import { randomBytes } from "crypto";
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import invariant from "tiny-invariant";
 import { z } from "zod";
 
 import { SqliteError } from "@karakeep/db";
 import {
+  accounts,
+  apiKeys,
   assets,
   AssetTypes,
   bookmarkLinks,
@@ -14,12 +16,14 @@ import {
   bookmarkTags,
   highlights,
   passwordResetTokens,
+  sessions,
   subscriptions,
   tagsOnBookmarks,
   users,
   verificationTokens,
 } from "@karakeep/db/schema";
-import { deleteAsset, deleteUserAssets } from "@karakeep/shared/assetdb";
+import { AdminMaintenanceQueue } from "@karakeep/shared-server";
+import { deleteAsset } from "@karakeep/shared/assetdb";
 import serverConfig from "@karakeep/shared/config";
 import {
   zResetPasswordSchema,
@@ -43,7 +47,7 @@ export class User {
 
   static async fromId_DANGEROUS(ctx: AuthedContext, id: string): Promise<User> {
     const user = await ctx.db.query.users.findFirst({
-      where: eq(users.id, id),
+      where: and(eq(users.id, id), isNull(users.deletedAt)),
     });
 
     if (!user) {
@@ -107,7 +111,8 @@ export class User {
       if (!userRole) {
         const [{ count: userCount }] = await trx
           .select({ count: count() })
-          .from(users);
+          .from(users)
+          .where(isNull(users.deletedAt));
         userRole = userCount === 0 ? "admin" : "user";
       }
 
@@ -145,7 +150,10 @@ export class User {
   }
 
   static async getAll(ctx: AuthedContext): Promise<User[]> {
-    const dbUsers = await ctx.db.select().from(users);
+    const dbUsers = await ctx.db
+      .select()
+      .from(users)
+      .where(isNull(users.deletedAt));
 
     return dbUsers.map((u) => new User(ctx, u));
   }
@@ -220,7 +228,7 @@ export class User {
     const result = await ctx.db
       .update(users)
       .set({ emailVerified: new Date() })
-      .where(eq(users.email, email));
+      .where(and(eq(users.email, email), isNull(users.deletedAt)));
 
     if (result.changes === 0) {
       throw new TRPCError({
@@ -246,7 +254,7 @@ export class User {
     }
 
     const user = await ctx.db.query.users.findFirst({
-      where: eq(users.email, email),
+      where: and(eq(users.email, email), isNull(users.deletedAt)),
     });
 
     if (!user) {
@@ -281,7 +289,7 @@ export class User {
     }
 
     const user = await ctx.db.query.users.findFirst({
-      where: eq(users.email, email),
+      where: and(eq(users.email, email), isNull(users.deletedAt)),
     });
 
     if (!user || !user.password) {
@@ -363,7 +371,7 @@ export class User {
         password: hashedPassword,
         salt: newSalt,
       })
-      .where(eq(users.id, resetToken.user.id));
+      .where(and(eq(users.id, resetToken.user.id), isNull(users.deletedAt)));
 
     await ctx.db
       .delete(passwordResetTokens)
@@ -394,15 +402,60 @@ export class User {
   }
 
   private static async deleteInternal(db: Context["db"], userId: string) {
-    await User.assertNoActiveStripeSubscriptionForUser(db, userId);
+    const user = await db.query.users.findFirst({
+      where: and(eq(users.id, userId), isNull(users.deletedAt)),
+      columns: {
+        email: true,
+      },
+    });
 
-    const res = await db.delete(users).where(eq(users.id, userId));
-
-    if (res.changes === 0) {
+    if (!user) {
       throw new TRPCError({ code: "NOT_FOUND" });
     }
 
-    await deleteUserAssets({ userId: userId });
+    await User.assertNoActiveStripeSubscriptionForUser(db, userId);
+
+    const deletedAt = new Date();
+    const deletedEmail = `deleted:${userId}:${deletedAt.getTime()}@deleted.local`;
+
+    await db.transaction(async (tx) => {
+      const res = await tx
+        .update(users)
+        .set({
+          deletedAt,
+          email: deletedEmail,
+          password: null,
+          image: null,
+          backupsEnabled: false,
+        })
+        .where(and(eq(users.id, userId), isNull(users.deletedAt)));
+
+      if (res.changes === 0) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      await tx
+        .update(bookmarks)
+        .set({
+          deletedAt,
+          modifiedAt: deletedAt,
+        })
+        .where(and(eq(bookmarks.userId, userId), isNull(bookmarks.deletedAt)));
+      await tx.delete(apiKeys).where(eq(apiKeys.userId, userId));
+      await tx.delete(sessions).where(eq(sessions.userId, userId));
+      await tx.delete(accounts).where(eq(accounts.userId, userId));
+      await tx
+        .delete(passwordResetTokens)
+        .where(eq(passwordResetTokens.userId, userId));
+      await tx
+        .delete(verificationTokens)
+        .where(eq(verificationTokens.identifier, user.email));
+    });
+
+    await AdminMaintenanceQueue.enqueue(
+      { type: "reap_deleted_data" },
+      { idempotencyKey: "reap_deleted_data" },
+    );
   }
 
   static async deleteAsAdmin(
@@ -461,12 +514,12 @@ export class User {
         password: await hashPassword(newPassword, newSalt),
         salt: newSalt,
       })
-      .where(eq(users.id, this.user.id));
+      .where(and(eq(users.id, this.user.id), isNull(users.deletedAt)));
   }
 
   async getSettings(): Promise<z.infer<typeof zUserSettingsSchema>> {
     const settings = await this.ctx.db.query.users.findFirst({
-      where: eq(users.id, this.user.id),
+      where: and(eq(users.id, this.user.id), isNull(users.deletedAt)),
       columns: {
         bookmarkClickAction: true,
         archiveDisplayBehaviour: true,
@@ -538,7 +591,7 @@ export class User {
         curatedTagIds: input.curatedTagIds,
         inferredTagLang: input.inferredTagLang,
       })
-      .where(eq(users.id, this.user.id));
+      .where(and(eq(users.id, this.user.id), isNull(users.deletedAt)));
   }
 
   async updateAvatar(assetId: string | null): Promise<void> {
@@ -616,7 +669,7 @@ export class User {
       await tx
         .update(users)
         .set({ image: assetId })
-        .where(eq(users.id, this.user.id));
+        .where(and(eq(users.id, this.user.id), isNull(users.deletedAt)));
 
       if (!previousImage || previousImage === assetId) {
         return;
@@ -641,7 +694,7 @@ export class User {
 
   async getStats(): Promise<z.infer<typeof zUserStatsResponseSchema>> {
     const userObj = await this.ctx.db.query.users.findFirst({
-      where: eq(users.id, this.user.id),
+      where: and(eq(users.id, this.user.id), isNull(users.deletedAt)),
       columns: {
         timezone: true,
       },
@@ -651,6 +704,10 @@ export class User {
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const yearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const activeBookmarksFilter = and(
+      eq(bookmarks.userId, this.user.id),
+      isNull(bookmarks.deletedAt),
+    );
 
     const [
       [{ numBookmarks }],
@@ -674,13 +731,14 @@ export class User {
       this.ctx.db
         .select({ numBookmarks: count() })
         .from(bookmarks)
-        .where(eq(bookmarks.userId, this.user.id)),
+        .where(activeBookmarksFilter),
       this.ctx.db
         .select({ numFavorites: count() })
         .from(bookmarks)
         .where(
           and(
             eq(bookmarks.userId, this.user.id),
+            isNull(bookmarks.deletedAt),
             eq(bookmarks.favourited, true),
           ),
         ),
@@ -688,7 +746,11 @@ export class User {
         .select({ numArchived: count() })
         .from(bookmarks)
         .where(
-          and(eq(bookmarks.userId, this.user.id), eq(bookmarks.archived, true)),
+          and(
+            eq(bookmarks.userId, this.user.id),
+            isNull(bookmarks.deletedAt),
+            eq(bookmarks.archived, true),
+          ),
         ),
       this.ctx.db
         .select({ numTags: count() })
@@ -710,7 +772,7 @@ export class User {
           count: count(),
         })
         .from(bookmarks)
-        .where(eq(bookmarks.userId, this.user.id))
+        .where(activeBookmarksFilter)
         .groupBy(bookmarks.type),
 
       // Top domains
@@ -743,7 +805,7 @@ export class User {
         })
         .from(bookmarkLinks)
         .innerJoin(bookmarks, eq(bookmarks.id, bookmarkLinks.id))
-        .where(eq(bookmarks.userId, this.user.id))
+        .where(activeBookmarksFilter)
         .groupBy(
           sql`CASE
           WHEN ${bookmarkLinks.url} LIKE 'https://%' THEN
@@ -798,6 +860,7 @@ export class User {
         .where(
           and(
             eq(bookmarks.userId, this.user.id),
+            isNull(bookmarks.deletedAt),
             gte(bookmarks.createdAt, weekAgo),
           ),
         ),
@@ -807,6 +870,7 @@ export class User {
         .where(
           and(
             eq(bookmarks.userId, this.user.id),
+            isNull(bookmarks.deletedAt),
             gte(bookmarks.createdAt, monthAgo),
           ),
         ),
@@ -816,6 +880,7 @@ export class User {
         .where(
           and(
             eq(bookmarks.userId, this.user.id),
+            isNull(bookmarks.deletedAt),
             gte(bookmarks.createdAt, yearAgo),
           ),
         ),
@@ -826,7 +891,7 @@ export class User {
           createdAt: bookmarks.createdAt,
         })
         .from(bookmarks)
-        .where(eq(bookmarks.userId, this.user.id)),
+        .where(activeBookmarksFilter),
 
       // Tag usage
       this.ctx.db
@@ -836,7 +901,8 @@ export class User {
         })
         .from(bookmarkTags)
         .innerJoin(tagsOnBookmarks, eq(tagsOnBookmarks.tagId, bookmarkTags.id))
-        .where(eq(bookmarkTags.userId, this.user.id))
+        .innerJoin(bookmarks, eq(bookmarks.id, tagsOnBookmarks.bookmarkId))
+        .where(activeBookmarksFilter)
         .groupBy(bookmarkTags.name)
         .orderBy(desc(count()))
         .limit(10),
@@ -848,7 +914,7 @@ export class User {
           count: count(),
         })
         .from(bookmarks)
-        .where(eq(bookmarks.userId, this.user.id))
+        .where(activeBookmarksFilter)
         .groupBy(bookmarks.source)
         .orderBy(desc(count())),
     ]);
@@ -926,6 +992,7 @@ export class User {
       .where(
         and(
           eq(bookmarks.userId, this.user.id),
+          isNull(bookmarks.deletedAt),
           gte(bookmarks.createdAt, yearStart),
           lte(bookmarks.createdAt, yearEnd),
         ),
@@ -938,7 +1005,7 @@ export class User {
     year: number,
   ): Promise<z.infer<typeof zWrappedStatsResponseSchema>> {
     const userObj = await this.ctx.db.query.users.findFirst({
-      where: eq(users.id, this.user.id),
+      where: and(eq(users.id, this.user.id), isNull(users.deletedAt)),
       columns: {
         timezone: true,
       },
@@ -951,6 +1018,7 @@ export class User {
 
     const yearFilter = and(
       eq(bookmarks.userId, this.user.id),
+      isNull(bookmarks.deletedAt),
       gte(bookmarks.createdAt, yearStart),
       lte(bookmarks.createdAt, yearEnd),
     );

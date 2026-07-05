@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db } from "@karakeep/db";
 import { users } from "@karakeep/db/schema";
@@ -9,7 +9,7 @@ export async function buildImpersonatingAuthedContext(
   userId: string,
 ): Promise<AuthedContext> {
   const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
+    where: and(eq(users.id, userId), isNull(users.deletedAt)),
   });
   if (!user) {
     throw new Error("User not found");

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getBookmarkDomain } from "network";
 
 import { db } from "@karakeep/db";
@@ -19,7 +19,7 @@ import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 
 async function fetchBookmarkDetailsForSummary(bookmarkId: string) {
   const bookmark = await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     columns: { id: true, userId: true, type: true },
     with: {
       link: {
@@ -39,7 +39,7 @@ async function fetchBookmarkDetailsForSummary(bookmarkId: string) {
   });
 
   if (!bookmark) {
-    throw new Error(`Bookmark with id ${bookmarkId} not found`);
+    return null;
   }
   return bookmark;
 }
@@ -62,10 +62,16 @@ export async function runSummarization(
   );
 
   const bookmarkData = await fetchBookmarkDetailsForSummary(bookmarkId);
+  if (!bookmarkData) {
+    logger.info(
+      `[inference][${jobId}] bookmark with id "${bookmarkId}" was not found, skipping summarization`,
+    );
+    return;
+  }
 
   // Check user-level preference
   const userSettings = await db.query.users.findFirst({
-    where: eq(users.id, bookmarkData.userId),
+    where: and(eq(users.id, bookmarkData.userId), isNull(users.deletedAt)),
     columns: {
       autoSummarizationEnabled: true,
       inferredTagLang: true,

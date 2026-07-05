@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db, KarakeepDBTransaction } from "@karakeep/db";
 import { assets, AssetTypes, bookmarks } from "@karakeep/db/schema";
@@ -18,7 +18,7 @@ export async function updateAsset(
 
 export async function getBookmarkDetails(bookmarkId: string) {
   const bookmark = await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     with: {
       link: true,
       assets: true,

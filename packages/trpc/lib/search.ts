@@ -97,6 +97,7 @@ async function getIds(
 ): Promise<BookmarkQueryReturnType[]> {
   const { db } = ctx;
   const userId = ctx.user.id;
+  const activeBookmark = () => isNull(bookmarks.deletedAt);
 
   switch (matcher.type) {
     case "tagName": {
@@ -107,6 +108,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(
               db
                 .select()
@@ -134,6 +136,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(
               db
                 .select()
@@ -178,7 +181,7 @@ async function getIds(
           return db
             .selectDistinct({ id: bookmarks.id })
             .from(bookmarks)
-            .where(eq(bookmarks.userId, userId));
+            .where(and(eq(bookmarks.userId, userId), activeBookmark()));
         }
         return [];
       }
@@ -189,6 +192,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             matcher.inverse
               ? notInArray(bookmarks.id, listBookmarkIds)
               : inArray(bookmarks.id, listBookmarkIds),
@@ -203,6 +207,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(
               db
                 .select()
@@ -220,6 +225,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(
               db
                 .select()
@@ -246,6 +252,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             eq(bookmarks.archived, matcher.archived),
           ),
         );
@@ -259,6 +266,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(bookmarkLinks.url, `%${matcher.url}%`),
           ),
         )
@@ -270,6 +278,7 @@ async function getIds(
             .where(
               and(
                 eq(bookmarks.userId, userId),
+                activeBookmark(),
                 // When a user is asking for a link, the inverse matcher should match only assets with URLs.
                 isNotNull(bookmarkAssets.sourceUrl),
                 comp(bookmarkAssets.sourceUrl, `%${matcher.url}%`),
@@ -287,6 +296,7 @@ async function getIds(
           .where(
             and(
               eq(bookmarks.userId, userId),
+              activeBookmark(),
               or(
                 isNull(bookmarks.title),
                 comp(bookmarks.title, `%${matcher.title}%`),
@@ -305,6 +315,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(bookmarks.title, `%${matcher.title}%`),
           ),
         )
@@ -316,6 +327,7 @@ async function getIds(
             .where(
               and(
                 eq(bookmarks.userId, userId),
+                activeBookmark(),
                 comp(bookmarkLinks.title, `%${matcher.title}%`),
               ),
             ),
@@ -328,6 +340,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             eq(bookmarks.favourited, matcher.favourited),
           ),
         );
@@ -340,6 +353,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(bookmarks.createdAt, matcher.dateAfter),
           ),
         );
@@ -352,6 +366,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(bookmarks.createdAt, matcher.dateBefore),
           ),
         );
@@ -364,6 +379,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(bookmarks.createdAt, toAbsoluteDate(matcher.relativeDate)),
           ),
         );
@@ -376,6 +392,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             comp(bookmarks.type, matcher.typeName),
           ),
         );
@@ -389,6 +406,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             matcher.brokenLinks
               ? or(
                   eq(bookmarkLinks.crawlStatus, "failure"),
@@ -410,6 +428,7 @@ async function getIds(
         .where(
           and(
             eq(bookmarks.userId, userId),
+            activeBookmark(),
             matcher.inverse
               ? or(
                   ne(bookmarks.source, matcher.source),

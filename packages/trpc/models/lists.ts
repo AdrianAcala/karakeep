@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import { and, count, eq, inArray, or, sql } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import invariant from "tiny-invariant";
 import { z } from "zod";
 
@@ -820,7 +820,7 @@ export abstract class List {
 
     // Get the owner information
     const owner = await this.ctx.db.query.users.findFirst({
-      where: eq(users.id, this.list.userId),
+      where: and(eq(users.id, this.list.userId), isNull(users.deletedAt)),
       columns: {
         id: true,
         name: true,
@@ -1005,7 +1005,13 @@ export class ManualList extends List {
     const results = await this.ctx.db
       .select({ id: bookmarksInLists.bookmarkId })
       .from(bookmarksInLists)
-      .where(eq(bookmarksInLists.listId, this.list.id));
+      .innerJoin(bookmarks, eq(bookmarks.id, bookmarksInLists.bookmarkId))
+      .where(
+        and(
+          eq(bookmarksInLists.listId, this.list.id),
+          isNull(bookmarks.deletedAt),
+        ),
+      );
     return results.map((r) => r.id);
   }
 
@@ -1013,12 +1019,29 @@ export class ManualList extends List {
     const results = await this.ctx.db
       .select({ count: count() })
       .from(bookmarksInLists)
-      .where(eq(bookmarksInLists.listId, this.list.id));
+      .innerJoin(bookmarks, eq(bookmarks.id, bookmarksInLists.bookmarkId))
+      .where(
+        and(
+          eq(bookmarksInLists.listId, this.list.id),
+          isNull(bookmarks.deletedAt),
+        ),
+      );
     return results[0].count;
   }
 
   async addBookmark(bookmarkId: string): Promise<void> {
     this.ensureCanEdit();
+
+    const bookmark = await this.ctx.db.query.bookmarks.findFirst({
+      where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
+      columns: { userId: true },
+    });
+    if (!bookmark) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Bookmark not found",
+      });
+    }
 
     try {
       await this.ctx.db.insert(bookmarksInLists).values({
@@ -1026,24 +1049,18 @@ export class ManualList extends List {
         bookmarkId,
         listMembershipId: this.collaboratorEntry?.membershipId,
       });
-      const bookmark = await this.ctx.db.query.bookmarks.findFirst({
-        where: eq(bookmarks.id, bookmarkId),
-        columns: { userId: true },
-      });
-      if (bookmark) {
-        await RuleEngine.triggerOnEvent(
-          bookmark.userId,
-          bookmarkId,
-          [
-            {
-              type: "addedToList",
-              listId: this.list.id,
-            },
-          ],
-          undefined,
-          this.ctx.db,
-        );
-      }
+      await RuleEngine.triggerOnEvent(
+        bookmark.userId,
+        bookmarkId,
+        [
+          {
+            type: "addedToList",
+            listId: this.list.id,
+          },
+        ],
+        undefined,
+        this.ctx.db,
+      );
     } catch (e) {
       if (e instanceof SqliteError) {
         if (e.code == "SQLITE_CONSTRAINT_PRIMARYKEY") {
@@ -1077,7 +1094,7 @@ export class ManualList extends List {
       });
     }
     const bookmark = await this.ctx.db.query.bookmarks.findFirst({
-      where: eq(bookmarks.id, bookmarkId),
+      where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
       columns: { userId: true },
     });
     if (bookmark) {

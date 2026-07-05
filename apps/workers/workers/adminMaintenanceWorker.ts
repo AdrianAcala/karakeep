@@ -4,6 +4,7 @@ import { withWorkerTracing } from "workerTracing";
 import {
   AdminMaintenanceQueue,
   ZAdminMaintenanceMigrateLargeLinkHtmlTask,
+  ZAdminMaintenanceReapDeletedDataTask,
   ZAdminMaintenanceTask,
   zAdminMaintenanceTaskSchema,
   ZAdminMaintenanceTidyAssetsTask,
@@ -12,6 +13,7 @@ import logger from "@karakeep/shared/logger";
 import { DequeuedJob, getQueueClient } from "@karakeep/shared/queueing";
 
 import { runMigrateLargeLinkHtmlTask } from "./adminMaintenance/tasks/migrateLinkHtmlContent";
+import { runReapDeletedDataTask } from "./adminMaintenance/tasks/reapDeletedData";
 import { runTidyAssetsTask } from "./adminMaintenance/tasks/tidyAssets";
 
 export class AdminMaintenanceWorker {
@@ -83,6 +85,10 @@ async function runAdminMaintenance(job: DequeuedJob<ZAdminMaintenanceTask>) {
     case "migrate_large_link_html":
       return runMigrateLargeLinkHtmlTask(
         job as DequeuedJob<ZAdminMaintenanceMigrateLargeLinkHtmlTask>,
+      );
+    case "reap_deleted_data":
+      return runReapDeletedDataTask(
+        job as DequeuedJob<ZAdminMaintenanceReapDeletedDataTask>,
       );
     default: {
       const exhaustiveCheck: never = task;

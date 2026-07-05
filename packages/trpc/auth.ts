@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "crypto";
 import * as bcrypt from "bcryptjs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { apiKeys } from "@karakeep/db/schema";
+import { apiKeys, users } from "@karakeep/db/schema";
 import type { ZApiKeyScope } from "@karakeep/shared/types/apiKeys";
 import { API_KEY_FULL_ACCESS_SCOPE } from "@karakeep/shared/types/apiKeys";
 import serverConfig from "@karakeep/shared/config";
@@ -116,6 +116,9 @@ export async function authenticateApiKey(key: string, database: Context["db"]) {
   if (!apiKey) {
     throw new Error("API key not found");
   }
+  if (apiKey.user.deletedAt) {
+    throw new Error("API key user not found");
+  }
 
   const hash = apiKey.keyHash;
 
@@ -172,7 +175,7 @@ export async function validatePassword(
     throw new Error("Password authentication is currently disabled");
   }
   const user = await database.query.users.findFirst({
-    where: (u, { eq }) => eq(u.email, email),
+    where: and(eq(users.email, email), isNull(users.deletedAt)),
   });
 
   if (!user) {

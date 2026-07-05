@@ -1,5 +1,5 @@
 import { experimental_trpcMiddleware, TRPCError } from "@trpc/server";
-import { and, eq, gt, inArray, like, lt, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, like, lt, or } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -113,7 +113,13 @@ async function attemptToDedupLink(ctx: AuthedContext, url: string) {
     })
     .from(bookmarkLinks)
     .leftJoin(bookmarks, eq(bookmarks.id, bookmarkLinks.id))
-    .where(and(eq(bookmarkLinks.url, url), eq(bookmarks.userId, ctx.user.id)));
+    .where(
+      and(
+        eq(bookmarkLinks.url, url),
+        eq(bookmarks.userId, ctx.user.id),
+        isNull(bookmarks.deletedAt),
+      ),
+    );
 
   if (result.length == 0) {
     return null;
@@ -946,6 +952,7 @@ export const bookmarksAppRouter = router({
         .where(
           and(
             eq(bookmarks.userId, ctx.user.id),
+            isNull(bookmarks.deletedAt),
             like(bookmarkLinks.url, `${normalizedInput}%`),
           ),
         );
@@ -1202,6 +1209,7 @@ export const bookmarksAppRouter = router({
         .where(
           and(
             eq(bookmarks.userId, ctx.user.id),
+            isNull(bookmarks.deletedAt),
             or(
               eq(bookmarkLinks.crawlStatus, "failure"),
               lt(bookmarkLinks.crawlStatusCode, 200),
@@ -1252,6 +1260,14 @@ export const bookmarksAppRouter = router({
           message: "No inference client configured",
         });
       }
+      const bookmarkModel = await Bookmark.fromId(ctx, input.bookmarkId, false);
+      if (bookmarkModel.asZBookmark().content.type !== BookmarkTypes.LINK) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Bookmark not found or not a link",
+        });
+      }
+
       const bookmark = await ctx.db.query.bookmarkLinks.findFirst({
         where: eq(bookmarkLinks.id, input.bookmarkId),
       });
@@ -1291,7 +1307,7 @@ Author: ${bookmark.author ?? ""}
       });
 
       const userSettings = await ctx.db.query.users.findFirst({
-        where: eq(users.id, ctx.user.id),
+        where: and(eq(users.id, ctx.user.id), isNull(users.deletedAt)),
         columns: {
           inferredTagLang: true,
         },

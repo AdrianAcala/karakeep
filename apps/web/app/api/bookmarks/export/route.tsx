@@ -3,7 +3,7 @@ import {
   createContextFromRequest,
   createTrcpClientFromCtx,
 } from "@/server/api/client";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "@karakeep/db";
@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
           and(
             inArray(bookmarksInLists.listId, manualListIds),
             eq(bookmarksTable.userId, ctx.user.id),
+            isNull(bookmarksTable.deletedAt),
           ),
         );
     }

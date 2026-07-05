@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { listCollaborators, listInvitations } from "@karakeep/db/schema";
+import { listCollaborators, listInvitations, users } from "@karakeep/db/schema";
 
 import type { AuthedContext } from "..";
 
@@ -196,7 +196,7 @@ export class ListInvitation {
     } = params;
 
     const user = await ctx.db.query.users.findFirst({
-      where: (users, { eq }) => eq(users.email, email),
+      where: and(eq(users.email, email), isNull(users.deletedAt)),
     });
 
     if (!user) {

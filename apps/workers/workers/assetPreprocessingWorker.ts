@@ -1,5 +1,5 @@
 import os from "os";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import PDFParser from "pdf2json";
 import { fromBuffer } from "pdf2pic";
@@ -373,7 +373,7 @@ async function extractAndSavePDFText(
 
 async function getBookmark(bookmarkId: string) {
   return db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     with: {
       asset: true,
       assets: true,
@@ -388,7 +388,7 @@ async function run(req: DequeuedJob<AssetPreprocessingRequest>) {
   addLogFields<"assetPreprocessingWorker.run">({ "bookmark.id": bookmarkId });
 
   const bookmark = await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     with: {
       asset: true,
       assets: true,

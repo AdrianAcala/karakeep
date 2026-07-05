@@ -40,6 +40,16 @@ vi.mock("@karakeep/shared/config", async (original) => {
   };
 });
 
+vi.mock("@karakeep/shared-server", async (original) => {
+  const mod = (await original()) as typeof import("@karakeep/shared-server");
+  return {
+    ...mod,
+    AdminMaintenanceQueue: {
+      enqueue: vi.fn(),
+    },
+  };
+});
+
 // Mock email functions
 vi.mock("../email", () => ({
   sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
@@ -916,17 +926,42 @@ describe("User Routes", () => {
         confirmPassword: "pass1234",
       });
       const caller = getApiCaller(db, user.id, user.email, user.role || "user");
+      const [bookmark] = await db
+        .insert(bookmarks)
+        .values({ userId: user.id, type: BookmarkTypes.TEXT })
+        .returning();
 
       await caller.users.deleteAccount({
         password: "pass1234",
       });
 
-      // Verify user is deleted
+      // Verify user and bookmark are hidden but queued for background reaping.
       const deletedUser = await db
-        .select()
+        .select({ deletedAt: users.deletedAt, email: users.email })
         .from(users)
         .where(eq(users.id, user.id));
-      expect(deletedUser).toHaveLength(0);
+      expect(deletedUser).toHaveLength(1);
+      expect(deletedUser[0].deletedAt).toBeInstanceOf(Date);
+      expect(deletedUser[0].email).not.toEqual(user.email);
+
+      const deletedBookmark = await db
+        .select({ deletedAt: bookmarks.deletedAt })
+        .from(bookmarks)
+        .where(eq(bookmarks.id, bookmark.id));
+      expect(deletedBookmark).toHaveLength(1);
+      expect(deletedBookmark[0].deletedAt).toBeInstanceOf(Date);
+      await expect(() => caller.users.whoami()).rejects.toThrow(
+        /User not found/,
+      );
+
+      await expect(
+        unauthedAPICaller.users.create({
+          name: "Replacement User",
+          email: user.email!,
+          password: "pass1234",
+          confirmPassword: "pass1234",
+        }),
+      ).resolves.toMatchObject({ email: user.email });
     });
 
     test<CustomTestContext>("deleteAccount refuses active Stripe subscription", async ({
@@ -958,10 +993,11 @@ describe("User Routes", () => {
       );
 
       const deletedUser = await db
-        .select()
+        .select({ deletedAt: users.deletedAt })
         .from(users)
         .where(eq(users.id, user.id));
       expect(deletedUser).toHaveLength(1);
+      expect(deletedUser[0].deletedAt).toBeNull();
     });
 
     test<CustomTestContext>("deleteAccount - wrong password", async ({
@@ -1003,12 +1039,14 @@ describe("User Routes", () => {
 
       await caller.users.deleteAccount({});
 
-      // Verify user is deleted
+      // Verify user is hidden but queued for background reaping.
       const deletedUser = await db
-        .select()
+        .select({ deletedAt: users.deletedAt, email: users.email })
         .from(users)
         .where(eq(users.id, oauthUser.id));
-      expect(deletedUser).toHaveLength(0);
+      expect(deletedUser).toHaveLength(1);
+      expect(deletedUser[0].deletedAt).toBeInstanceOf(Date);
+      expect(deletedUser[0].email).not.toEqual(oauthUser.email);
     });
   });
 

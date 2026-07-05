@@ -1,8 +1,10 @@
 import { headers } from "next/headers";
 import { getServerAuthSession } from "@/server/auth";
+import { and, eq, isNull } from "drizzle-orm";
 import requestIp from "request-ip";
 
 import { db } from "@karakeep/db";
+import { users } from "@karakeep/db/schema";
 import { Context, createCallerFactory } from "@karakeep/trpc";
 import { authenticateApiKey } from "@karakeep/trpc/auth";
 import { appRouter } from "@karakeep/trpc/routers/_app";
@@ -49,9 +51,21 @@ export const createContext = async (
       headers: Object.fromEntries(hdrs.entries()),
     });
   }
+  const activeUser = session?.user?.id
+    ? await (database ?? db).query.users.findFirst({
+        where: and(eq(users.id, session.user.id), isNull(users.deletedAt)),
+      })
+    : null;
   return {
-    user: session?.user ?? null,
-    auth: session?.user
+    user: activeUser
+      ? {
+          id: activeUser.id,
+          name: activeUser.name,
+          email: activeUser.email,
+          role: activeUser.role,
+        }
+      : null,
+    auth: activeUser
       ? {
           type: "session" as const,
         }

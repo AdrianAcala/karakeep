@@ -1,4 +1,4 @@
-import { count, sum } from "drizzle-orm";
+import { count, isNull, sum } from "drizzle-orm";
 import { Counter, Gauge, Histogram, register } from "prom-client";
 import type { Metric } from "prom-client";
 
@@ -93,7 +93,10 @@ const totalUsersGauge = getOrCreateMetric(
       help: "Total number of users in the system",
       async collect() {
         try {
-          const result = await db.select({ count: count() }).from(users);
+          const result = await db
+            .select({ count: count() })
+            .from(users)
+            .where(isNull(users.deletedAt));
           this.set(result[0]?.count ?? 0);
         } catch (error) {
           console.error("Failed to get user count:", error);
@@ -166,7 +169,10 @@ const totalBookmarksGauge = getOrCreateMetric(
       help: "Total number of bookmarks in the system",
       async collect() {
         try {
-          const result = await db.select({ count: count() }).from(bookmarks);
+          const result = await db
+            .select({ count: count() })
+            .from(bookmarks)
+            .where(isNull(bookmarks.deletedAt));
           this.set(result[0]?.count ?? 0);
         } catch (error) {
           console.error("Failed to get bookmark count:", error);

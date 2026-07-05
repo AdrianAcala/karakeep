@@ -1,6 +1,6 @@
 import { Adapter, AdapterUser } from "@auth/core/adapters";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq, isNull } from "drizzle-orm";
 import NextAuth, {
   DefaultSession,
   getServerSession,
@@ -63,7 +63,8 @@ declare module "next-auth" {
 async function isFirstUser(): Promise<boolean> {
   const [{ count: userCount }] = await db
     .select({ count: count() })
-    .from(users);
+    .from(users)
+    .where(isNull(users.deletedAt));
   return userCount == 0;
 }
 
@@ -73,7 +74,7 @@ async function isFirstUser(): Promise<boolean> {
 async function isAdmin(email: string): Promise<boolean> {
   const res = await db.query.users.findFirst({
     columns: { role: true },
-    where: eq(users.email, email),
+    where: and(eq(users.email, email), isNull(users.deletedAt)),
   });
   return res?.role == "admin";
 }
@@ -97,6 +98,39 @@ const CustomProvider = (): Adapter => {
 
   return {
     ...adapter,
+    getUser: async (id: string) => {
+      const user = await adapter.getUser?.(id);
+      if (!user) {
+        return null;
+      }
+      const activeUser = await db.query.users.findFirst({
+        columns: { id: true },
+        where: and(eq(users.id, user.id), isNull(users.deletedAt)),
+      });
+      return activeUser ? user : null;
+    },
+    getUserByEmail: async (email: string) => {
+      const user = await adapter.getUserByEmail?.(email);
+      if (!user) {
+        return null;
+      }
+      const activeUser = await db.query.users.findFirst({
+        columns: { id: true },
+        where: and(eq(users.id, user.id), isNull(users.deletedAt)),
+      });
+      return activeUser ? user : null;
+    },
+    getUserByAccount: async (account) => {
+      const user = await adapter.getUserByAccount?.(account);
+      if (!user) {
+        return null;
+      }
+      const activeUser = await db.query.users.findFirst({
+        columns: { id: true },
+        where: and(eq(users.id, user.id), isNull(users.deletedAt)),
+      });
+      return activeUser ? user : null;
+    },
     createUser: async (user: Omit<AdapterUser, "id">) => {
       const created = await User.createRaw(db, {
         name: normalizeSafeDisplayName(user.name),
@@ -216,7 +250,7 @@ export const authOptions: NextAuthOptions = {
       }
       const user = await db.query.users.findFirst({
         columns: { id: true, emailVerified: true },
-        where: eq(users.email, email),
+        where: and(eq(users.email, email), isNull(users.deletedAt)),
       });
 
       if (credentials) {

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
 
@@ -35,7 +35,9 @@ async function attemptMarkStatus(
           : {}),
         ...(request.type === "tag" ? { taggingStatus: status } : {}),
       })
-      .where(eq(bookmarks.id, request.bookmarkId));
+      .where(
+        and(eq(bookmarks.id, request.bookmarkId), isNull(bookmarks.deletedAt)),
+      );
   } catch (e) {
     logger.error(`Something went wrong when marking the tagging status: ${e}`);
   }
@@ -100,16 +102,22 @@ async function runOpenAI(job: DequeuedJob<ZOpenAIRequest>) {
 
   const { bookmarkId } = request.data;
   const bookmark = await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     columns: {
       userId: true,
     },
   });
+  if (!bookmark) {
+    logger.info(
+      `[inference][${jobId}] bookmark with id ${bookmarkId} was not found, skipping`,
+    );
+    return;
+  }
 
   addLogFields<"inferenceWorker.run">({
     "bookmark.id": bookmarkId,
     "inference.type": request.data.type,
-    ...(bookmark ? { "user.id": bookmark.userId } : {}),
+    "user.id": bookmark.userId,
   });
   switch (request.data.type) {
     case "summarize":

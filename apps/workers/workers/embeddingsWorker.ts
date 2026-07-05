@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
 
@@ -94,7 +94,9 @@ async function attemptMarkEmbeddingStatus(
     await db
       .update(bookmarks)
       .set({ embeddingStatus: status })
-      .where(eq(bookmarks.id, request.bookmarkId));
+      .where(
+        and(eq(bookmarks.id, request.bookmarkId), isNull(bookmarks.deletedAt)),
+      );
   } catch (e) {
     logger.error(
       `Something went wrong when marking the embedding status: ${e}`,
@@ -132,7 +134,7 @@ async function enqueueTaggingFallback(
     return;
   }
   const bookmark = await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     columns: {
       userId: true,
     },
@@ -148,7 +150,7 @@ async function enqueueTaggingFallback(
 
 async function fetchBookmark(bookmarkId: string) {
   return await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     with: {
       link: true,
       text: true,

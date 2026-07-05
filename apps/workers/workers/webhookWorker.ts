@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import { fetchWithProxy } from "network";
 import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
@@ -60,7 +60,7 @@ export class WebhookWorker {
 
 async function fetchBookmark(bookmarkId: string) {
   return await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, bookmarkId),
+    where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     with: {
       link: {
         columns: {

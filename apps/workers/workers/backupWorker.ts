@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createId } from "@paralleldrive/cuid2";
 import archiver from "archiver";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import cron from "node-cron";
 import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
@@ -48,7 +48,7 @@ export const BackupSchedulingWorker = cron.schedule(
           id: true,
           backupsFrequency: true,
         },
-        where: eq(users.backupsEnabled, true),
+        where: and(eq(users.backupsEnabled, true), isNull(users.deletedAt)),
       });
 
       logger.info(
@@ -184,7 +184,7 @@ async function run(req: DequeuedJob<ZBackupRequest>) {
       id: true,
       backupsRetentionDays: true,
     },
-    where: eq(users.id, userId),
+    where: and(eq(users.id, userId), isNull(users.deletedAt)),
   });
 
   if (!user) {

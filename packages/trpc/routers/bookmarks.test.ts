@@ -30,6 +30,9 @@ vi.mock("@karakeep/shared-server", async (original) => {
     SearchIndexingQueue: {
       enqueue: vi.fn(),
     },
+    AdminMaintenanceQueue: {
+      enqueue: vi.fn(),
+    },
     RuleEngineQueue: {
       enqueue: vi.fn(),
     },
@@ -139,7 +142,7 @@ describe("Bookmark Routes", () => {
     expect(created.content.type).toBe(BookmarkTypes.TEXT);
   });
 
-  test<CustomTestContext>("delete bookmark", async ({ apiCallers }) => {
+  test<CustomTestContext>("delete bookmark", async ({ apiCallers, db }) => {
     const api = apiCallers[0].bookmarks;
 
     // Create the bookmark
@@ -158,6 +161,13 @@ describe("Bookmark Routes", () => {
     await expect(() =>
       api.getBookmark({ bookmarkId: bookmark.id }),
     ).rejects.toThrow(/Bookmark not found/);
+
+    const deletedRows = await db
+      .select({ deletedAt: bookmarks.deletedAt })
+      .from(bookmarks)
+      .where(eq(bookmarks.id, bookmark.id));
+    expect(deletedRows).toHaveLength(1);
+    expect(deletedRows[0].deletedAt).toBeInstanceOf(Date);
   });
 
   test<CustomTestContext>("update bookmark", async ({ apiCallers }) => {

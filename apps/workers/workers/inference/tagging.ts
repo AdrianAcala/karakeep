@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getBookmarkDomain } from "network";
 import { buildImpersonatingTRPCClient } from "trpc";
 import { z } from "zod";
@@ -514,7 +514,7 @@ async function connectTags(
 
 async function fetchBookmark(linkId: string) {
   return await db.query.bookmarks.findFirst({
-    where: eq(bookmarks.id, linkId),
+    where: and(eq(bookmarks.id, linkId), isNull(bookmarks.deletedAt)),
     with: {
       link: true,
       text: true,
@@ -630,14 +630,15 @@ export async function runTagging(
   const jobId = job.id;
   const bookmark = await fetchBookmark(bookmarkId);
   if (!bookmark) {
-    throw new Error(
-      `[inference][${jobId}] bookmark with id ${bookmarkId} was not found`,
+    logger.info(
+      `[inference][${jobId}] bookmark with id ${bookmarkId} was not found, skipping tagging`,
     );
+    return;
   }
 
   // Check user-level preference
   const userSettings = await db.query.users.findFirst({
-    where: eq(users.id, bookmark.userId),
+    where: and(eq(users.id, bookmark.userId), isNull(users.deletedAt)),
     columns: {
       autoTaggingEnabled: true,
       tagStyle: true,

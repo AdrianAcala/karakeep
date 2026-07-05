@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { invites, users } from "@karakeep/db/schema";
@@ -27,7 +27,7 @@ export const invitesAppRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       const existingUser = await ctx.db.query.users.findFirst({
-        where: eq(users.email, input.email),
+        where: and(eq(users.email, input.email), isNull(users.deletedAt)),
       });
 
       if (existingUser) {
@@ -178,7 +178,7 @@ export const invitesAppRouter = router({
       }
 
       const existingUser = await ctx.db.query.users.findFirst({
-        where: eq(users.email, invite.email),
+        where: and(eq(users.email, invite.email), isNull(users.deletedAt)),
       });
 
       if (existingUser) {

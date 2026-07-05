@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
 import type { ZBookmark } from "@karakeep/shared/types/bookmarks";
 import type { ZCursor } from "@karakeep/shared/types/pagination";
@@ -17,7 +17,7 @@ export async function fetchAllBookmarksForUser(
   userId: string,
 ): Promise<ZBookmark[]> {
   const allBookmarks = await dbInstance.query.bookmarks.findMany({
-    where: eq(bookmarks.userId, userId),
+    where: and(eq(bookmarks.userId, userId), isNull(bookmarks.deletedAt)),
     with: {
       tagsOnBookmarks: {
         with: {

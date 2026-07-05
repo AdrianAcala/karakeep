@@ -1,7 +1,7 @@
 // Thanks to @t3dotgg for the recommendations (https://github.com/t3dotgg/stripe-recommendations)!
 
 import { TRPCError } from "@trpc/server";
-import { count, eq, sum } from "drizzle-orm";
+import { and, count, eq, isNull, sum } from "drizzle-orm";
 import Stripe from "stripe";
 import { z } from "zod";
 
@@ -161,7 +161,12 @@ export async function syncStripeDataToDatabase(
               browserCrawlingEnabled:
                 serverConfig.quotas.free.browserCrawlingEnabled,
             })
-            .where(eq(users.id, existingSubscription.userId));
+            .where(
+              and(
+                eq(users.id, existingSubscription.userId),
+                isNull(users.deletedAt),
+              ),
+            );
         });
         addLogFields<"subscription.synced">({
           "subscription.tier": "free",
@@ -235,7 +240,12 @@ export async function syncStripeDataToDatabase(
               browserCrawlingEnabled:
                 serverConfig.quotas.paid.browserCrawlingEnabled,
             })
-            .where(eq(users.id, existingSubscription.userId));
+            .where(
+              and(
+                eq(users.id, existingSubscription.userId),
+                isNull(users.deletedAt),
+              ),
+            );
         } else {
           // Set free tier quotas and disable browser crawling
           await trx
@@ -246,7 +256,12 @@ export async function syncStripeDataToDatabase(
               browserCrawlingEnabled:
                 serverConfig.quotas.free.browserCrawlingEnabled,
             })
-            .where(eq(users.id, existingSubscription.userId));
+            .where(
+              and(
+                eq(users.id, existingSubscription.userId),
+                isNull(users.deletedAt),
+              ),
+            );
         }
       });
 
@@ -389,7 +404,7 @@ export const subscriptionsRouter = router({
           : priceId;
 
       const user = await ctx.db.query.users.findFirst({
-        where: eq(users.id, ctx.user.id),
+        where: and(eq(users.id, ctx.user.id), isNull(users.deletedAt)),
         columns: {
           email: true,
         },
@@ -511,7 +526,7 @@ export const subscriptionsRouter = router({
 
   getQuotaUsage: subscriptionsProcedure.query(async ({ ctx }) => {
     const user = await ctx.db.query.users.findFirst({
-      where: eq(users.id, ctx.user.id),
+      where: and(eq(users.id, ctx.user.id), isNull(users.deletedAt)),
       columns: {
         bookmarkQuota: true,
         storageQuota: true,
@@ -529,7 +544,9 @@ export const subscriptionsRouter = router({
     const [{ bookmarkCount }] = await ctx.db
       .select({ bookmarkCount: count() })
       .from(bookmarks)
-      .where(eq(bookmarks.userId, ctx.user.id));
+      .where(
+        and(eq(bookmarks.userId, ctx.user.id), isNull(bookmarks.deletedAt)),
+      );
 
     // Get current storage usage
     const [{ storageUsed }] = await ctx.db

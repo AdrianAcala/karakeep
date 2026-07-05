@@ -1,10 +1,11 @@
 import * as dns from "dns";
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, eq, gt, inArray, or, sum } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, or, sum } from "drizzle-orm";
 import { z } from "zod";
 
 import {
   assets,
+  bookmarkAssets,
   bookmarkLinks,
   bookmarks,
   subscriptions,
@@ -61,8 +62,14 @@ export const adminAppRouter = router({
     .query(async ({ ctx }) => {
       const [[{ value: numUsers }], [{ value: numBookmarks }]] =
         await Promise.all([
-          ctx.db.select({ value: count() }).from(users),
-          ctx.db.select({ value: count() }).from(bookmarks),
+          ctx.db
+            .select({ value: count() })
+            .from(users)
+            .where(isNull(users.deletedAt)),
+          ctx.db
+            .select({ value: count() })
+            .from(bookmarks)
+            .where(isNull(bookmarks.deletedAt)),
         ]);
 
       return {
@@ -164,11 +171,21 @@ export const adminAppRouter = router({
         ctx.db
           .select({ value: count() })
           .from(bookmarks)
-          .where(eq(bookmarks.embeddingStatus, "pending")),
+          .where(
+            and(
+              eq(bookmarks.embeddingStatus, "pending"),
+              isNull(bookmarks.deletedAt),
+            ),
+          ),
         ctx.db
           .select({ value: count() })
           .from(bookmarks)
-          .where(eq(bookmarks.embeddingStatus, "failure")),
+          .where(
+            and(
+              eq(bookmarks.embeddingStatus, "failure"),
+              isNull(bookmarks.deletedAt),
+            ),
+          ),
 
         // Inference
         OpenAIQueue.stats(),
@@ -176,18 +193,24 @@ export const adminAppRouter = router({
           .select({ value: count() })
           .from(bookmarks)
           .where(
-            or(
-              eq(bookmarks.taggingStatus, "pending"),
-              eq(bookmarks.summarizationStatus, "pending"),
+            and(
+              isNull(bookmarks.deletedAt),
+              or(
+                eq(bookmarks.taggingStatus, "pending"),
+                eq(bookmarks.summarizationStatus, "pending"),
+              ),
             ),
           ),
         ctx.db
           .select({ value: count() })
           .from(bookmarks)
           .where(
-            or(
-              eq(bookmarks.taggingStatus, "failure"),
-              eq(bookmarks.summarizationStatus, "failure"),
+            and(
+              isNull(bookmarks.deletedAt),
+              or(
+                eq(bookmarks.taggingStatus, "failure"),
+                eq(bookmarks.summarizationStatus, "failure"),
+              ),
             ),
           ),
 
@@ -259,14 +282,18 @@ export const adminAppRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const bookmarkIds = await ctx.db.query.bookmarkLinks.findMany({
-        columns: {
-          id: true,
-        },
-        ...(input.crawlStatus === "all"
-          ? {}
-          : { where: eq(bookmarkLinks.crawlStatus, input.crawlStatus) }),
-      });
+      const bookmarkIds = await ctx.db
+        .select({ id: bookmarkLinks.id })
+        .from(bookmarkLinks)
+        .innerJoin(bookmarks, eq(bookmarks.id, bookmarkLinks.id))
+        .where(
+          and(
+            input.crawlStatus === "all"
+              ? undefined
+              : eq(bookmarkLinks.crawlStatus, input.crawlStatus),
+            isNull(bookmarks.deletedAt),
+          ),
+        );
 
       await Promise.all(
         bookmarkIds.map((b) => {
@@ -288,6 +315,7 @@ export const adminAppRouter = router({
       columns: {
         id: true,
       },
+      where: isNull(bookmarks.deletedAt),
     });
 
     await Promise.all(
@@ -330,6 +358,7 @@ export const adminAppRouter = router({
                 ? undefined
                 : eq(bookmarks.embeddingStatus, status),
               cursor ? gt(bookmarks.id, cursor) : undefined,
+              isNull(bookmarks.deletedAt),
             ),
           )
           .orderBy(asc(bookmarks.id))
@@ -370,11 +399,11 @@ export const adminAppRouter = router({
       }
     }),
   reprocessAssetsFixMode: adminBookmarksProcedure.mutation(async ({ ctx }) => {
-    const bookmarkIds = await ctx.db.query.bookmarkAssets.findMany({
-      columns: {
-        id: true,
-      },
-    });
+    const bookmarkIds = await ctx.db
+      .select({ id: bookmarkAssets.id })
+      .from(bookmarkAssets)
+      .innerJoin(bookmarks, eq(bookmarks.id, bookmarkAssets.id))
+      .where(isNull(bookmarks.deletedAt));
 
     await Promise.all(
       bookmarkIds.map((b) =>
@@ -402,16 +431,14 @@ export const adminAppRouter = router({
         columns: {
           id: true,
         },
-        ...{
-          tag:
-            input.status === "all"
-              ? {}
-              : { where: eq(bookmarks.taggingStatus, input.status) },
-          summarize:
-            input.status === "all"
-              ? {}
-              : { where: eq(bookmarks.summarizationStatus, input.status) },
-        }[input.type],
+        where: and(
+          input.status === "all"
+            ? undefined
+            : input.type === "tag"
+              ? eq(bookmarks.taggingStatus, input.status)
+              : eq(bookmarks.summarizationStatus, input.status),
+          isNull(bookmarks.deletedAt),
+        ),
       });
 
       await Promise.all(
@@ -442,10 +469,14 @@ export const adminAppRouter = router({
     )
     .query(async ({ ctx }) => {
       const [userIds, bookmarkStats, assetStats] = await Promise.all([
-        ctx.db.select({ id: users.id }).from(users),
+        ctx.db
+          .select({ id: users.id })
+          .from(users)
+          .where(isNull(users.deletedAt)),
         ctx.db
           .select({ id: bookmarks.userId, value: count() })
           .from(bookmarks)
+          .where(isNull(bookmarks.deletedAt))
           .groupBy(bookmarks.userId),
         ctx.db
           .select({ id: assets.userId, value: sum(assets.size) })
@@ -523,7 +554,7 @@ export const adminAppRouter = router({
       const result = await ctx.db
         .update(users)
         .set(updateData)
-        .where(eq(users.id, input.userId));
+        .where(and(eq(users.id, input.userId), isNull(users.deletedAt)));
 
       if (!result.changes) {
         throw new TRPCError({
@@ -546,7 +577,7 @@ export const adminAppRouter = router({
       const result = await ctx.db
         .update(users)
         .set({ password: hashedPassword, salt: newSalt })
-        .where(eq(users.id, input.userId));
+        .where(and(eq(users.id, input.userId), isNull(users.deletedAt)));
 
       if (result.changes == 0) {
         throw new TRPCError({
@@ -797,7 +828,10 @@ export const adminAppRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify bookmark exists and is a link
       const bookmark = await ctx.db.query.bookmarks.findFirst({
-        where: eq(bookmarks.id, input.bookmarkId),
+        where: and(
+          eq(bookmarks.id, input.bookmarkId),
+          isNull(bookmarks.deletedAt),
+        ),
       });
 
       if (!bookmark) {
@@ -826,7 +860,10 @@ export const adminAppRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify bookmark exists
       const bookmark = await ctx.db.query.bookmarks.findFirst({
-        where: eq(bookmarks.id, input.bookmarkId),
+        where: and(
+          eq(bookmarks.id, input.bookmarkId),
+          isNull(bookmarks.deletedAt),
+        ),
       });
 
       if (!bookmark) {
@@ -846,7 +883,10 @@ export const adminAppRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify bookmark exists
       const bookmark = await ctx.db.query.bookmarks.findFirst({
-        where: eq(bookmarks.id, input.bookmarkId),
+        where: and(
+          eq(bookmarks.id, input.bookmarkId),
+          isNull(bookmarks.deletedAt),
+        ),
       });
 
       if (!bookmark) {
@@ -859,7 +899,9 @@ export const adminAppRouter = router({
       await ctx.db
         .update(bookmarks)
         .set({ embeddingStatus: "pending" })
-        .where(eq(bookmarks.id, input.bookmarkId));
+        .where(
+          and(eq(bookmarks.id, input.bookmarkId), isNull(bookmarks.deletedAt)),
+        );
 
       await EmbeddingsQueue.enqueue(
         {
@@ -879,7 +921,10 @@ export const adminAppRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify bookmark exists
       const bookmark = await ctx.db.query.bookmarks.findFirst({
-        where: eq(bookmarks.id, input.bookmarkId),
+        where: and(
+          eq(bookmarks.id, input.bookmarkId),
+          isNull(bookmarks.deletedAt),
+        ),
       });
 
       if (!bookmark) {
@@ -905,7 +950,10 @@ export const adminAppRouter = router({
     .mutation(async ({ input, ctx }) => {
       // Verify bookmark exists and is a link
       const bookmark = await ctx.db.query.bookmarks.findFirst({
-        where: eq(bookmarks.id, input.bookmarkId),
+        where: and(
+          eq(bookmarks.id, input.bookmarkId),
+          isNull(bookmarks.deletedAt),
+        ),
       });
 
       if (!bookmark) {

@@ -8,6 +8,7 @@ import {
   gt,
   gte,
   inArray,
+  isNull,
   lt,
   lte,
   or,
@@ -29,10 +30,14 @@ import {
   rssFeedImportsTable,
   tagsOnBookmarks,
 } from "@karakeep/db/schema";
-import { EmbeddingsQueue, SearchIndexingQueue } from "@karakeep/shared-server";
+import {
+  AdminMaintenanceQueue,
+  EmbeddingsQueue,
+  SearchIndexingQueue,
+} from "@karakeep/shared-server";
 
 import { WebhooksService } from "./webhooks.service";
-import { deleteAsset, readAsset } from "@karakeep/shared/assetdb";
+import { readAsset } from "@karakeep/shared/assetdb";
 import { getAlignedExpiry } from "@karakeep/shared/signedTokens";
 import {
   BookmarkTypes,
@@ -99,7 +104,7 @@ export class BareBookmark {
 
   static async bareFromId(ctx: AuthedContext, bookmarkId: string) {
     const bookmark = await ctx.db.query.bookmarks.findFirst({
-      where: eq(bookmarks.id, bookmarkId),
+      where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
     });
 
     if (!bookmark) {
@@ -236,7 +241,7 @@ export class Bookmark extends BareBookmark {
     includeContent: boolean,
   ) {
     const bookmark = await ctx.db.query.bookmarks.findFirst({
-      where: eq(bookmarks.id, bookmarkId),
+      where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
       with: {
         tagsOnBookmarks: {
           with: {
@@ -288,7 +293,7 @@ export class Bookmark extends BareBookmark {
     ]);
 
     const bookmark = await ctx.db.query.bookmarks.findFirst({
-      where: eq(bookmarks.id, bookmarkId),
+      where: and(eq(bookmarks.id, bookmarkId), isNull(bookmarks.deletedAt)),
       with: {
         link: true,
         text: true,
@@ -468,6 +473,7 @@ export class Bookmark extends BareBookmark {
         ? eq(bookmarks.favourited, input.favourited)
         : undefined,
       input.ids ? inArray(bookmarks.id, input.ids) : undefined,
+      isNull(bookmarks.deletedAt),
     ];
 
     // Build ORDER BY clause
@@ -906,29 +912,20 @@ export class Bookmark extends BareBookmark {
     return htmlToPlainText(content);
   }
 
-  private async cleanupAssets() {
-    const assetIds: Set<string> = new Set<string>(
-      this.bookmark.assets.map((a) => a.id),
-    );
-    // Todo: Remove when the bookmark asset is also in the assets table
-    if (this.bookmark.content.type == BookmarkTypes.ASSET) {
-      assetIds.add(this.bookmark.content.assetId);
-    }
-    await Promise.all(
-      Array.from(assetIds).map((assetId) =>
-        deleteAsset({ userId: this.bookmark.userId, assetId }),
-      ),
-    );
-  }
-
   async delete() {
     this.ensureOwnership();
-    const deleted = await this.ctx.db
-      .delete(bookmarks)
+    const deletedAt = new Date();
+    await this.ctx.db
+      .update(bookmarks)
+      .set({
+        deletedAt,
+        modifiedAt: deletedAt,
+      })
       .where(
         and(
           eq(bookmarks.userId, this.ctx.user.id),
           eq(bookmarks.id, this.bookmark.id),
+          isNull(bookmarks.deletedAt),
         ),
       );
 
@@ -960,8 +957,9 @@ export class Bookmark extends BareBookmark {
         groupId: this.ctx.user.id,
       },
     );
-    if (deleted.changes > 0) {
-      await this.cleanupAssets();
-    }
+    await AdminMaintenanceQueue.enqueue(
+      { type: "reap_deleted_data" },
+      { idempotencyKey: "reap_deleted_data" },
+    );
   }
 }

@@ -9,7 +9,7 @@ import { PlaywrightBlocker } from "@ghostery/adblocker-playwright";
 import { Mutex } from "async-mutex";
 import { dataUriToBuffer } from "data-uri-to-buffer";
 import type { MimeBuffer } from "data-uri-to-buffer";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { execa } from "execa";
 import { exitAbortController } from "exit";
 import {
@@ -598,7 +598,7 @@ export async function crawlPage(
         browserCrawlingEnabled = browserCrawlingEnabledOverride;
       } else {
         const userData = await db.query.users.findFirst({
-          where: eq(users.id, userId),
+          where: and(eq(users.id, userId), isNull(users.deletedAt)),
           columns: { browserCrawlingEnabled: true },
         });
         if (!userData) {

@@ -1,4 +1,4 @@
-import { count, eq, sum } from "drizzle-orm";
+import { and, count, eq, isNull, sum } from "drizzle-orm";
 
 import type { DB, KarakeepDBTransaction } from "@karakeep/db";
 import { assets, bookmarks, users } from "@karakeep/db/schema";
@@ -27,7 +27,7 @@ export class QuotaService {
     userId: string,
   ) {
     const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
+      where: and(eq(users.id, userId), isNull(users.deletedAt)),
       columns: {
         bookmarkQuota: true,
       },
@@ -37,7 +37,7 @@ export class QuotaService {
       const currentBookmarkCount = await db
         .select({ count: count() })
         .from(bookmarks)
-        .where(eq(bookmarks.userId, userId));
+        .where(and(eq(bookmarks.userId, userId), isNull(bookmarks.deletedAt)));
 
       if (currentBookmarkCount[0].count >= user.bookmarkQuota) {
         return {
@@ -57,7 +57,7 @@ export class QuotaService {
     requestedSize: number,
   ): Promise<QuotaApproved> {
     const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
+      where: and(eq(users.id, userId), isNull(users.deletedAt)),
       columns: {
         storageQuota: true,
       },

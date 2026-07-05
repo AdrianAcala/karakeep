@@ -29,76 +29,85 @@ function modifiedAtField() {
     .$onUpdate(() => new Date());
 }
 
-export const users = sqliteTable("user", {
-  id: text("id")
-    .notNull()
-    .primaryKey()
-    .$defaultFn(() => createId()),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  emailVerified: integer("emailVerified", { mode: "timestamp_ms" }),
-  image: text("image"),
-  password: text("password"),
-  salt: text("salt").notNull().default(""),
-  role: text("role", { enum: ["admin", "user"] }).default("user"),
+function deletedAtField() {
+  return integer("deletedAt", { mode: "timestamp" });
+}
 
-  // Admin Only Settings
-  bookmarkQuota: integer("bookmarkQuota"),
-  storageQuota: integer("storageQuota"),
-  browserCrawlingEnabled: integer("browserCrawlingEnabled", {
-    mode: "boolean",
-  }),
+export const users = sqliteTable(
+  "user",
+  {
+    id: text("id")
+      .notNull()
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: integer("emailVerified", { mode: "timestamp_ms" }),
+    image: text("image"),
+    password: text("password"),
+    salt: text("salt").notNull().default(""),
+    role: text("role", { enum: ["admin", "user"] }).default("user"),
+    deletedAt: deletedAtField(),
 
-  // User Settings
-  bookmarkClickAction: text("bookmarkClickAction", {
-    enum: ["open_original_link", "expand_bookmark_preview"],
-  })
-    .notNull()
-    .default("open_original_link"),
-  archiveDisplayBehaviour: text("archiveDisplayBehaviour", {
-    enum: ["show", "hide"],
-  })
-    .notNull()
-    .default("show"),
-  timezone: text("timezone").default("UTC"),
+    // Admin Only Settings
+    bookmarkQuota: integer("bookmarkQuota"),
+    storageQuota: integer("storageQuota"),
+    browserCrawlingEnabled: integer("browserCrawlingEnabled", {
+      mode: "boolean",
+    }),
 
-  // Backup Settings
-  backupsEnabled: integer("backupsEnabled", { mode: "boolean" })
-    .notNull()
-    .default(false),
-  backupsFrequency: text("backupsFrequency", {
-    enum: ["daily", "weekly"],
-  })
-    .notNull()
-    .default("weekly"),
-  backupsRetentionDays: integer("backupsRetentionDays").notNull().default(30),
+    // User Settings
+    bookmarkClickAction: text("bookmarkClickAction", {
+      enum: ["open_original_link", "expand_bookmark_preview"],
+    })
+      .notNull()
+      .default("open_original_link"),
+    archiveDisplayBehaviour: text("archiveDisplayBehaviour", {
+      enum: ["show", "hide"],
+    })
+      .notNull()
+      .default("show"),
+    timezone: text("timezone").default("UTC"),
 
-  // Reader view settings (nullable = opt-in, null means use client default)
-  readerFontSize: integer("readerFontSize"),
-  readerLineHeight: real("readerLineHeight"),
-  readerFontFamily: text("readerFontFamily", {
-    enum: ["serif", "sans", "mono"],
-  }),
+    // Backup Settings
+    backupsEnabled: integer("backupsEnabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    backupsFrequency: text("backupsFrequency", {
+      enum: ["daily", "weekly"],
+    })
+      .notNull()
+      .default("weekly"),
+    backupsRetentionDays: integer("backupsRetentionDays").notNull().default(30),
 
-  // AI Settings (nullable = opt-in, null means use server default)
-  autoTaggingEnabled: integer("autoTaggingEnabled", { mode: "boolean" }),
-  autoSummarizationEnabled: integer("autoSummarizationEnabled", {
-    mode: "boolean",
-  }),
-  tagStyle: text("tagStyle", {
-    enum: [
-      "lowercase-hyphens",
-      "lowercase-spaces",
-      "lowercase-underscores",
-      "titlecase-spaces",
-      "titlecase-hyphens",
-      "camelCase",
-      "as-generated",
-    ],
-  }).default("titlecase-spaces"),
-  curatedTagIds: text("curatedTagIds", { mode: "json" }).$type<string[]>(),
-  inferredTagLang: text("inferredTagLang"),
-});
+    // Reader view settings (nullable = opt-in, null means use client default)
+    readerFontSize: integer("readerFontSize"),
+    readerLineHeight: real("readerLineHeight"),
+    readerFontFamily: text("readerFontFamily", {
+      enum: ["serif", "sans", "mono"],
+    }),
+
+    // AI Settings (nullable = opt-in, null means use server default)
+    autoTaggingEnabled: integer("autoTaggingEnabled", { mode: "boolean" }),
+    autoSummarizationEnabled: integer("autoSummarizationEnabled", {
+      mode: "boolean",
+    }),
+    tagStyle: text("tagStyle", {
+      enum: [
+        "lowercase-hyphens",
+        "lowercase-spaces",
+        "lowercase-underscores",
+        "titlecase-spaces",
+        "titlecase-hyphens",
+        "camelCase",
+        "as-generated",
+      ],
+    }).default("titlecase-spaces"),
+    curatedTagIds: text("curatedTagIds", { mode: "json" }).$type<string[]>(),
+    inferredTagLang: text("inferredTagLang"),
+  },
+  (u) => [index("users_deletedAt_idx").on(u.deletedAt)],
+);
 
 export const accounts = sqliteTable(
   "account",
@@ -216,6 +225,7 @@ export const bookmarks = sqliteTable(
     type: text("type", {
       enum: [BookmarkTypes.LINK, BookmarkTypes.TEXT, BookmarkTypes.ASSET],
     }).notNull(),
+    deletedAt: deletedAtField(),
     source: text("source", {
       enum: [
         "api",
@@ -231,6 +241,8 @@ export const bookmarks = sqliteTable(
   },
   (b) => [
     index("bookmarks_userId_idx").on(b.userId),
+    index("bookmarks_deletedAt_idx").on(b.deletedAt),
+    index("bookmarks_userId_deletedAt_idx").on(b.userId, b.deletedAt),
     index("bookmarks_createdAt_idx").on(b.createdAt),
     // Composite indexes for optimized pagination queries
     index("bookmarks_userId_createdAt_id_idx").on(b.userId, b.createdAt, b.id),
